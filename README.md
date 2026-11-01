@@ -72,11 +72,14 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 
 脚本会在这个页面下检查 Entries / Daily / Weekly 三个库：
 - 已存在的直接复用，缺少的属性自动补上，标题列名字不对会自动改名
-- 不存在的就新建，包括双向关联和「条数」统计
+- 不存在的就新建，包括双向关联、「条数」统计和常用视图（见 1.5）
 - 属性名存在但类型不对（例如「状态」用了 Notion 的 Status 类型）时只报错提示，不会改动已有属性
-- 三个数据库 ID 写进 `.dev.vars`；加上 `-- --secrets` 参数会同时上传为 Cloudflare secret（见第 3 节）
+- 已存在的同名视图不会改动，所以你在 Notion 里手动调整过的视图不会被覆盖
+- 三个**数据源 ID** 写进 `.dev.vars`；加上 `-- --secrets` 参数会同时上传为 Cloudflare secret（见第 3 节）
 
 脚本可以重复运行。改了 `src/config.js` 里的属性名或标签清单后，再运行一次即可补上新属性。
+
+> **数据库和数据源**：Notion API 从 2025-09-03 版开始，把数据库拆成两层。数据库只是容器，属性和记录属于其中的「数据源」（data source）。一个数据库可以有多个数据源，本项目每个库只用一个。Worker 查询和写入记录用的都是数据源 ID（`NOTION_*_DS`），它和数据库链接里的 ID 不是同一个。本项目使用 API 版本 `2026-03-11`。
 
 ### 1.4 数据库结构（供参考，也可以手动创建）
 
@@ -116,13 +119,29 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 | `结束` | Date | |
 | `每日` | Relation → Daily | 开启「在 Daily 上显示」，名称填 `周回顾` |
 
-手动创建时：三个库都要连接 Integration；数据库 ID 是数据库链接 `notion.so/<工作区>/<32 位 ID>?v=...` 中 `?v=` 之前的部分，填进 `.dev.vars`。
+如果你手动建了库，同样运行一次 `npm run setup:notion`：它会按名称（Entries / Daily / Weekly）找到你建的库，补上缺少的部分，并把数据源 ID 写进 `.dev.vars`。前提是这三个库放在 `NOTION_PARENT_PAGE` 页面下面。
 
-### 1.5 视图（可选，但推荐）
+### 1.5 视图
 
-视图无法通过 API 创建，需要手动建。
+由脚本自动创建：
 
-在 Entries 上建：今天（List，`时间` 是今天，按时间升序）、收件匣（`状态` = 未处理）、链接库（Gallery，`类型` = 链接）、技术笔记（`类型` = 技术）、按主题（Board，按 `Tags` 分组）。
+| 所在库 | 视图 | 布局 | 筛选 / 排序 |
+|---|---|---|---|
+| Entries | 全部 | 表格 | 时间降序 |
+| Entries | 今天 | 列表 | `时间` 是今天，升序 |
+| Entries | 收件匣 | 表格 | `状态` = 未处理，时间降序 |
+| Entries | 链接库 | 画廊 | `类型` = 链接，时间降序 |
+| Entries | 技术笔记 | 列表 | `类型` = 技术，时间降序 |
+| Entries | 按主题 | 看板 | 按 `Tags` 分组 |
+| Daily | 日记 | 表格 | 日期降序 |
+| Weekly | 周回顾 | 表格 | 开始日期降序 |
+
+新建数据库时 Notion 会自带一个叫 Default view 的表格视图，脚本会把它改造成上表里该库的第一个表格视图，不会多出一个。视图的显示列、列宽等细节没有设置，按需在 Notion 里调整即可，脚本之后不会覆盖。
+
+### 1.6 只能手动做的部分
+
+- 新建父页面，并把 Integration 连接上去：API 不提供这个接口
+- 创建 Integration 本身
 
 ---
 
@@ -151,7 +170,7 @@ npx wrangler secret put TG_BOT_TOKEN
 npx wrangler secret put TG_WEBHOOK_SECRET   # 用 openssl rand -hex 24 生成
 npx wrangler secret put MY_TG_USER_ID
 
-# 三个数据库 ID：由脚本检查/创建后自动上传
+# 三个数据源 ID：由脚本检查/创建后自动上传
 npm run setup:notion -- --secrets
 ```
 

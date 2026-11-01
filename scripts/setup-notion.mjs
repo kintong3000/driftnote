@@ -1,12 +1,15 @@
-// 检查 Notion 里的三个数据库：不存在就新建，缺少的属性自动补上。
-// 可以重复运行，已经正确的部分不会改动。
+// 检查 Notion 里的三个数据库：不存在就新建，缺少的属性、关联和视图自动补上。
+// 可以重复运行，已经存在的部分不会改动（包括你手动调整过的视图）。
 //
 // 用法：npm run setup:notion            # 只更新本地 .dev.vars
-//       npm run setup:notion -- --secrets  # 同时把数据库 ID 上传为 Cloudflare secret
+//       npm run setup:notion -- --secrets  # 同时把数据源 ID 上传为 Cloudflare secret
 //
 // 需要在 .dev.vars（或环境变量）里提供：
 //   NOTION_API_KEY      Integration token
 //   NOTION_PARENT_PAGE  存放数据库的页面链接或 ID（需要先把 Integration 连接到这个页面）
+//
+// Notion API 2025-09-03 起，数据库只是容器，属性和记录属于其中的「数据源」（data source）。
+// Worker 读写记录用的是数据源 ID，所以脚本写入 .dev.vars 的是 NOTION_*_DS。
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,13 +19,16 @@ import { notion } from "../src/notion.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEV_VARS = fileURLToPath(new URL("../.dev.vars", import.meta.url));
+const DEFAULT_VIEW = "Default view"; // 新建数据库时 Notion 自动创建的表格视图
 
 const options = (names) => ({ options: names.map((name) => ({ name })) });
+const byTime = (direction) => [{ property: ENTRY.time, direction }];
+const is = (property, kind, value) => ({ property, [kind]: { equals: value } });
 
-// 被 Worker 读写的属性名来自 src/config.js；下面几个只在 Notion 里显示，代码不读写
+// 被 Worker 读写的属性名来自 src/config.js；「日总结」「周回顾」「条数」和视图只在 Notion 里显示，代码不读写
 const DATABASES = [
   {
-    key: "NOTION_ENTRIES_DB",
+    key: "NOTION_ENTRIES_DS",
     title: "Entries",
     properties: {
       [ENTRY.title]: { title: {} },
@@ -36,29 +42,58 @@ const DATABASES = [
       [ENTRY.aiDone]: { checkbox: {} },
       [ENTRY.externalId]: { rich_text: {} },
     },
+    // 第一个表格视图会复用 Notion 自动创建的 Default view
+    views: [
+      { name: "全部", type: "table", sorts: byTime("descending") },
+      {
+        name: "今天",
+        type: "list",
+        filter: {
+          and: [
+            { property: ENTRY.time, date: { on_or_after: "today" } },
+            { property: ENTRY.time, date: { before: "tomorrow" } },
+          ],
+        },
+        sorts: byTime("ascending"),
+      },
+      { name: "收件匣", type: "table", filter: is(ENTRY.status, "select", STATUS.inbox), sorts: byTime("descending") },
+      { name: "链接库", type: "gallery", filter: is(ENTRY.type, "select", "链接"), sorts: byTime("descending") },
+      { name: "技术笔记", type: "list", filter: is(ENTRY.type, "select", "技术"), sorts: byTime("descending") },
+      {
+        name: "按主题",
+        type: "board",
+        sorts: byTime("descending"),
+        configuration: (props) => ({
+          type: "board",
+          group_by: { type: "multi_select", property_id: props[ENTRY.tags].id, sort: { type: "manual" }, hide_empty_groups: true },
+        }),
+      },
+    ],
   },
   {
-    key: "NOTION_DAILY_DB",
+    key: "NOTION_DAILY_DS",
     title: "Daily",
     properties: {
       [DAILY.title]: { title: {} },
       [DAILY.date]: { date: {} },
       [DAILY.summary]: { rich_text: {} },
     },
-    relations: [{ name: DAILY.entries, target: "NOTION_ENTRIES_DB", syncedName: "日总结" }],
+    relations: [{ name: DAILY.entries, target: "NOTION_ENTRIES_DS", syncedName: "日总结" }],
     rollups: {
       条数: { rollup: { relation_property_name: DAILY.entries, rollup_property_name: ENTRY.title, function: "count" } },
     },
+    views: [{ name: "日记", type: "table", sorts: [{ property: DAILY.date, direction: "descending" }] }],
   },
   {
-    key: "NOTION_WEEKLY_DB",
+    key: "NOTION_WEEKLY_DS",
     title: "Weekly",
     properties: {
       [WEEKLY.title]: { title: {} },
       [WEEKLY.start]: { date: {} },
       [WEEKLY.end]: { date: {} },
     },
-    relations: [{ name: WEEKLY.dailies, target: "NOTION_DAILY_DB", syncedName: "周回顾" }],
+    relations: [{ name: WEEKLY.dailies, target: "NOTION_DAILY_DS", syncedName: "周回顾" }],
+    views: [{ name: "周回顾", type: "table", sorts: [{ property: WEEKLY.start, direction: "descending" }] }],
   },
 ];
 
@@ -85,9 +120,11 @@ try {
   process.exit(1);
 }
 
-const ids = {};
+const sources = {}; // key → 数据源对象
 for (const spec of DATABASES) await ensureDatabase(spec);
+for (const spec of DATABASES) await ensureViews(spec, sources[spec.key]);
 
+const ids = Object.fromEntries(Object.entries(sources).map(([key, ds]) => [key, ds.id]));
 writeDevVars(ids);
 console.log("\n已写入 .dev.vars：");
 for (const [key, id] of Object.entries(ids)) console.log(`  ${key}=${id}`);
@@ -107,54 +144,64 @@ if (problems.length) {
 console.log("\n✓ 完成");
 
 async function ensureDatabase(spec) {
-  let db = await findDatabase(spec);
-  if (db) {
+  let ds = await findDataSource(spec);
+  if (ds) {
     console.log(`✓ 找到 ${spec.title}`);
   } else {
-    db = await notion(env, "/databases", "POST", {
+    const db = await notion(env, "/databases", "POST", {
       parent: { type: "page_id", page_id: parentId },
       title: [{ type: "text", text: { content: spec.title } }],
-      properties: spec.properties,
+      initial_data_source: { properties: spec.properties },
     });
+    ds = await notion(env, `/data_sources/${db.data_sources[0].id}`);
     console.log(`＋ 新建 ${spec.title}`);
   }
-  ids[spec.key] = db.id;
+  sources[spec.key] = ds;
 
-  db = await addMissing(spec, db, spec.properties);
-  for (const rel of spec.relations || []) db = await ensureRelation(spec, db, rel);
-  if (spec.rollups) await addMissing(spec, db, spec.rollups);
+  ds = await addMissing(spec, ds, spec.properties);
+  for (const rel of spec.relations || []) ds = await ensureRelation(spec, ds, rel);
+  if (spec.rollups) ds = await addMissing(spec, ds, spec.rollups);
+  sources[spec.key] = ds;
 }
 
-// 优先用 .dev.vars 里已有的 ID，否则在父页面下按标题查找
-async function findDatabase(spec) {
+// 优先用 .dev.vars 里已有的数据源 ID，否则在父页面下按数据库标题查找
+async function findDataSource(spec) {
   const id = process.env[spec.key] || vars[spec.key];
   if (id) {
     try {
-      return await notion(env, `/databases/${id}`);
+      const ds = await notion(env, `/data_sources/${id}`);
+      if (ds.properties && !ds.in_trash) return ds;
     } catch (err) {
       console.warn(`  .dev.vars 里的 ${spec.key} 无法访问（${err.message}），改为按名称查找`);
     }
   }
+
   const res = await notion(env, "/search", "POST", {
     query: spec.title,
-    filter: { property: "object", value: "database" },
+    filter: { property: "object", value: "data_source" },
     page_size: 100,
   });
-  return res.results.find(
-    (db) => cleanId(db.parent?.page_id) === cleanId(parentId) && plain(db.title) === spec.title && !db.archived && !db.in_trash,
+  const candidates = res.results.filter(
+    (ds) => cleanId(ds.database_parent?.page_id) === cleanId(parentId) && !ds.in_trash && ds.parent?.database_id,
   );
+  // 搜索按数据库标题匹配，但返回的是数据源，需要再取一次数据库确认标题
+  for (const candidate of candidates) {
+    const db = await notion(env, `/databases/${candidate.parent.database_id}`);
+    if (plain(db.title) === spec.title && !db.in_trash) return notion(env, `/data_sources/${candidate.id}`);
+  }
+  return null;
 }
 
-async function addMissing(spec, db, wanted) {
+async function addMissing(spec, ds, wanted) {
   const update = {};
   for (const [name, schema] of Object.entries(wanted)) {
-    const current = db.properties[name];
+    const current = ds.properties[name];
     const type = typeOf(schema);
     if (current) {
       if (current.type !== type) problems.push(`${spec.title} 的「${name}」类型是 ${current.type}，应为 ${type}`);
     } else if (type === "title") {
-      // 每个数据库只有一个标题列，名字不对（例如默认的 Name）就改名
-      const titleProp = Object.values(db.properties).find((p) => p.type === "title");
+      // 每个数据源只有一个标题列，名字不对（例如默认的 Name）就改名
+      const titleProp = Object.values(ds.properties).find((p) => p.type === "title");
       update[titleProp.id] = { name };
       console.log(`  ✎ ${spec.title}：标题列「${titleProp.name}」改名为「${name}」`);
     } else {
@@ -162,31 +209,79 @@ async function addMissing(spec, db, wanted) {
       console.log(`  ＋ ${spec.title}：新增属性「${name}」`);
     }
   }
-  if (!Object.keys(update).length) return db;
-  return notion(env, `/databases/${db.id}`, "PATCH", { properties: update });
+  if (!Object.keys(update).length) return ds;
+  return notion(env, `/data_sources/${ds.id}`, "PATCH", { properties: update });
 }
 
-// 双向关联：新建后把对方库里自动生成的同步属性改成指定名字
-async function ensureRelation(spec, db, rel) {
-  const targetId = ids[rel.target];
-  const current = db.properties[rel.name];
+// 双向关联：请求里直接指定对方的同步属性名；如果 Notion 没有采用，再改名一次
+async function ensureRelation(spec, ds, rel) {
+  const target = sources[rel.target];
+  const current = ds.properties[rel.name];
   if (current) {
     if (current.type !== "relation") problems.push(`${spec.title} 的「${rel.name}」类型是 ${current.type}，应为 relation`);
-    else if (cleanId(current.relation.database_id) !== cleanId(targetId)) {
-      problems.push(`${spec.title} 的「${rel.name}」关联的不是 ${rel.target} 对应的数据库`);
+    else if (cleanId(current.relation.data_source_id) !== cleanId(target.id)) {
+      problems.push(`${spec.title} 的「${rel.name}」关联的不是 ${rel.target} 对应的数据源`);
     }
-    return db;
+    return ds;
   }
 
-  db = await notion(env, `/databases/${db.id}`, "PATCH", {
-    properties: { [rel.name]: { relation: { database_id: targetId, type: "dual_property", dual_property: {} } } },
+  ds = await notion(env, `/data_sources/${ds.id}`, "PATCH", {
+    properties: {
+      [rel.name]: {
+        relation: { data_source_id: target.id, type: "dual_property", dual_property: { synced_property_name: rel.syncedName } },
+      },
+    },
   });
-  const synced = db.properties[rel.name].relation.dual_property;
-  await notion(env, `/databases/${targetId}`, "PATCH", {
-    properties: { [synced.synced_property_id]: { name: rel.syncedName } },
-  });
+  const syncedId = ds.properties[rel.name].relation.dual_property.synced_property_id;
+  let targetDs = await notion(env, `/data_sources/${target.id}`);
+  const synced = Object.values(targetDs.properties).find((p) => p.id === syncedId);
+  if (synced && synced.name !== rel.syncedName) {
+    targetDs = await notion(env, `/data_sources/${target.id}`, "PATCH", {
+      properties: { [syncedId]: { name: rel.syncedName } },
+    });
+  }
+  sources[rel.target] = targetDs;
   console.log(`  ＋ ${spec.title}：新增双向关联「${rel.name}」（对方显示为「${rel.syncedName}」）`);
-  return db;
+  return ds;
+}
+
+// 按名称检查视图：已存在的不动；新建数据库自带的 Default view 改造成第一个表格视图
+async function ensureViews(spec, ds) {
+  const databaseId = ds.parent.database_id;
+  const existing = await listViews(databaseId);
+  const names = new Set(existing.map((v) => v.name));
+  let defaultView = existing.find((v) => v.name === DEFAULT_VIEW && v.type === "table");
+
+  for (const view of spec.views || []) {
+    if (names.has(view.name)) continue;
+    const body = {
+      name: view.name,
+      ...(view.filter && { filter: view.filter }),
+      ...(view.sorts && { sorts: view.sorts }),
+      ...(view.configuration && { configuration: view.configuration(ds.properties) }),
+    };
+    if (view.type === "table" && defaultView) {
+      await notion(env, `/views/${defaultView.id}`, "PATCH", body);
+      console.log(`  ✎ ${spec.title}：视图「${DEFAULT_VIEW}」改为「${view.name}」`);
+      defaultView = null;
+    } else {
+      await notion(env, "/views", "POST", { database_id: databaseId, data_source_id: ds.id, type: view.type, ...body });
+      console.log(`  ＋ ${spec.title}：新增视图「${view.name}」`);
+    }
+  }
+}
+
+// 列表接口只返回视图 ID，需要逐个取详情才能拿到名称
+async function listViews(databaseId) {
+  const refs = [];
+  let cursor;
+  do {
+    const params = new URLSearchParams({ database_id: databaseId, page_size: "100", ...(cursor && { start_cursor: cursor }) });
+    const res = await notion(env, `/views?${params}`);
+    refs.push(...res.results);
+    cursor = res.has_more ? res.next_cursor : null;
+  } while (cursor);
+  return Promise.all(refs.map((ref) => notion(env, `/views/${ref.id}`)));
 }
 
 function readDevVars() {

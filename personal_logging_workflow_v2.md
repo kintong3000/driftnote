@@ -333,7 +333,7 @@ crons = [
 | 变量 | 说明 |
 |---|---|
 | `NOTION_API_KEY` | Notion Internal Integration Token |
-| `NOTION_ENTRIES_DB` / `NOTION_DAILY_DB` / `NOTION_WEEKLY_DB` | 三个数据库的 ID |
+| `NOTION_ENTRIES_DS` / `NOTION_DAILY_DS` / `NOTION_WEEKLY_DS` | 三个数据源（data source）的 ID，由 `npm run setup:notion` 获取 |
 | `AUTH_TOKEN` | `/api/capture` 的鉴权 token（`openssl rand -hex 24` 生成） |
 | `TG_BOT_TOKEN` | Telegram Bot Token |
 | `TG_WEBHOOK_SECRET` | 设置 webhook 时传入的 secret_token |
@@ -450,7 +450,7 @@ Cloudflare Workers 免费版每次调用最多 50 个子请求（以官方文档
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
-| **1. Notion**（15 分钟） | 建 3 个库和属性、建视图、建 Integration 并共享给 3 个库 | 手动在每个库各新增一行，正常 |
+| **1. Notion**（10 分钟） | 建 Integration、建父页面并连接，运行 `npm run setup:notion` 自动建库、属性和视图 | 三个库和视图都已出现 |
 | **2. Worker 捕获**（30 分钟） | 部署 capture 和 telegram 路由，设置 secrets 和 webhook | 见下方测试清单 |
 | **3. 各个入口**（30 分钟） | note 脚本、书签脚本、iOS 快捷指令 A/B、Claude Code `/note` | 每个入口都成功写入一条 |
 | **4. 日任务**（30 分钟） | 部署 daily，用 `wrangler dev --test-scheduled` 手动触发 | Daily 页生成、标签已回写、TG 收到推送 |

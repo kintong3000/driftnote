@@ -19,7 +19,7 @@ const SECTIONS = [
 
 export async function runDaily(env, { today = localDate() } = {}) {
   const budget = { left: LIMITS.subrequestBudget - 1 };
-  const backlog = await queryAll(env, env.NOTION_ENTRIES_DB, {
+  const backlog = await queryAll(env, env.NOTION_ENTRIES_DS, {
     filter: {
       and: [
         { property: ENTRY.aiDone, checkbox: { equals: false } },
@@ -84,7 +84,7 @@ async function processDay(env, date, pending, budget) {
 }
 
 async function findDaily(env, date) {
-  const data = await query(env, env.NOTION_DAILY_DB, {
+  const data = await query(env, env.NOTION_DAILY_DS, {
     filter: { property: DAILY.title, title: { equals: date } },
     page_size: 1,
   });
@@ -92,7 +92,7 @@ async function findDaily(env, date) {
 }
 
 const queryDay = (env, date) =>
-  queryAll(env, env.NOTION_ENTRIES_DB, {
+  queryAll(env, env.NOTION_ENTRIES_DS, {
     filter: {
       and: [
         { property: ENTRY.time, date: { on_or_after: dayStart(date) } },
@@ -139,7 +139,7 @@ function createDaily(env, date, entries, summary) {
     .join("\n");
 
   return notion(env, "/pages", "POST", {
-    parent: { database_id: env.NOTION_DAILY_DB },
+    parent: { type: "data_source_id", data_source_id: env.NOTION_DAILY_DS },
     properties: {
       [DAILY.title]: P.title(date),
       [DAILY.date]: P.date(date),

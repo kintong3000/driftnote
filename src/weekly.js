@@ -14,7 +14,7 @@ export async function runWeekly(env, { today = localDate() } = {}) {
   const end = addDays(today, -1);
   const week = isoWeek(start);
 
-  const existing = await query(env, env.NOTION_WEEKLY_DB, {
+  const existing = await query(env, env.NOTION_WEEKLY_DS, {
     filter: { property: WEEKLY.title, title: { equals: week } },
     page_size: 1,
   });
@@ -22,7 +22,7 @@ export async function runWeekly(env, { today = localDate() } = {}) {
 
   const entries = await queryAll(
     env,
-    env.NOTION_ENTRIES_DB,
+    env.NOTION_ENTRIES_DS,
     {
       filter: {
         and: [
@@ -36,7 +36,7 @@ export async function runWeekly(env, { today = localDate() } = {}) {
   );
   if (!entries.length) return { week, skipped: "上周没有记录" };
 
-  const dailies = await queryAll(env, env.NOTION_DAILY_DB, {
+  const dailies = await queryAll(env, env.NOTION_DAILY_DS, {
     filter: {
       and: [
         { property: DAILY.date, date: { on_or_after: start } },
@@ -46,7 +46,7 @@ export async function runWeekly(env, { today = localDate() } = {}) {
     sorts: [{ property: DAILY.date, direction: "ascending" }],
   });
 
-  const backlogData = await query(env, env.NOTION_ENTRIES_DB, {
+  const backlogData = await query(env, env.NOTION_ENTRIES_DS, {
     filter: {
       and: [
         { property: ENTRY.status, select: { equals: STATUS.inbox } },
@@ -63,7 +63,7 @@ export async function runWeekly(env, { today = localDate() } = {}) {
   const review = normalizeReview(ai, backlog, echoes);
 
   const page = await notion(env, "/pages", "POST", {
-    parent: { database_id: env.NOTION_WEEKLY_DB },
+    parent: { type: "data_source_id", data_source_id: env.NOTION_WEEKLY_DS },
     properties: {
       [WEEKLY.title]: P.title(week),
       [WEEKLY.start]: P.date(start),
@@ -89,7 +89,7 @@ async function findEchoes(env, entries, today) {
   const seen = new Set();
   const echoes = [];
   for (const tag of topTags) {
-    const data = await query(env, env.NOTION_ENTRIES_DB, {
+    const data = await query(env, env.NOTION_ENTRIES_DS, {
       filter: {
         and: [
           { property: ENTRY.tags, multi_select: { contains: tag } },

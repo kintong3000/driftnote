@@ -63,7 +63,7 @@ export async function capture(env, input) {
   if (externalId) properties[ENTRY.externalId] = P.text(externalId);
 
   const page = await notion(env, "/pages", "POST", {
-    parent: { database_id: env.NOTION_ENTRIES_DB },
+    parent: { type: "data_source_id", data_source_id: env.NOTION_ENTRIES_DS },
     properties,
     children: paragraphs(text),
   });
@@ -78,7 +78,7 @@ function guessType(text, url, source) {
 }
 
 async function findByExternalId(env, externalId) {
-  const data = await query(env, env.NOTION_ENTRIES_DB, {
+  const data = await query(env, env.NOTION_ENTRIES_DS, {
     filter: { property: ENTRY.externalId, rich_text: { equals: externalId } },
     page_size: 1,
   });

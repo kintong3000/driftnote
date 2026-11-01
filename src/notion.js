@@ -1,7 +1,7 @@
 // Notion API 封装：统一检查错误，提供属性和 block 的构造/读取工具。
 
 const API = "https://api.notion.com/v1";
-const VERSION = "2022-06-28";
+const VERSION = "2026-03-11";
 
 export async function notion(env, path, method = "GET", body) {
   const res = await fetch(API + path, {
@@ -18,14 +18,15 @@ export async function notion(env, path, method = "GET", body) {
   return data;
 }
 
-export const query = (env, dbId, body) => notion(env, `/databases/${dbId}/query`, "POST", body);
+// 新版 API 中，记录属于数据源（data source），查询用数据源 ID 而不是数据库 ID
+export const query = (env, dataSourceId, body) => notion(env, `/data_sources/${dataSourceId}/query`, "POST", body);
 
 // 分页查询，最多翻 maxPages 页（每页 100 条，每页消耗一个子请求）
-export async function queryAll(env, dbId, body = {}, maxPages = 1) {
+export async function queryAll(env, dataSourceId, body = {}, maxPages = 1) {
   const results = [];
   let cursor;
   for (let i = 0; i < maxPages; i++) {
-    const data = await query(env, dbId, { ...body, page_size: 100, ...(cursor && { start_cursor: cursor }) });
+    const data = await query(env, dataSourceId, { ...body, page_size: 100, ...(cursor && { start_cursor: cursor }) });
     results.push(...data.results);
     if (!data.has_more) break;
     cursor = data.next_cursor;
