@@ -1,0 +1,26 @@
+name = "driftnote"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[observability]
+enabled = true
+
+# Workers AI：代码中通过 env.AI.run() 调用，不需要 API Key
+[ai]
+binding = "AI"
+
+# 非机密配置。机密配置用 `npx wrangler secret put <名称>` 设置，见 README
+[vars]
+LLM_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
+STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
+NOTION_ENTRIES_DB = "填入 Entries 数据库 ID"
+NOTION_DAILY_DB = "填入 Daily 数据库 ID"
+NOTION_WEEKLY_DB = "填入 Weekly 数据库 ID"
+MY_TG_USER_ID = "填入你的 Telegram ID"
+
+# 必须和 src/config.js 里的 CRON 一致（时间为 UTC）
+[triggers]
+crons = [
+  "0 0 * * *",  # 北京 08:00 → 日任务
+  "30 0 * * 1", # 北京周一 08:30 → 周任务
+]

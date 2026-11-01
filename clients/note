@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# 用法：note "内容"  |  cmd | note  |  note -t 技术 "内容"
+set -euo pipefail
+: "${NOTE_ENDPOINT:?未设置 NOTE_ENDPOINT}" "${NOTE_TOKEN:?未设置 NOTE_TOKEN}"
+
+type=""
+if [ "${1:-}" = "-t" ]; then type="$2"; shift 2; fi
+if [ $# -gt 0 ]; then content="$*"; elif [ ! -t 0 ]; then content="$(cat)"; else content=""; fi
+[ -z "$content" ] && { echo "用法：note [-t 类型] <内容>  或  cmd | note" >&2; exit 1; }
+
+payload=$(jq -nc --arg t "$content" --arg ty "$type" \
+  --arg s "${NOTE_SOURCE:-terminal}" --arg id "$(uuidgen)" \
+  '{text: $t, source: $s, id: $id} + (if $ty == "" then {} else {type: $ty} end)')
+
+# 后台发送，失败的写进本地队列，用 note-retry 重发
+( curl -sf -m 15 -X POST "$NOTE_ENDPOINT/api/capture" \
+    -H "Content-Type: application/json" -H "X-Auth-Token: $NOTE_TOKEN" \
+    -d "$payload" >/dev/null \
+  || printf '%s\n' "$payload" >> "$HOME/.note_failed.jsonl" ) &
+echo "✓ queued"

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# 重发 note 失败的记录。带着原来的 id 重发，服务端会去重，所以不会重复写入。
+set -uo pipefail
+: "${NOTE_ENDPOINT:?未设置 NOTE_ENDPOINT}" "${NOTE_TOKEN:?未设置 NOTE_TOKEN}"
+
+f="$HOME/.note_failed.jsonl"
+[ -s "$f" ] || { echo "没有待重发的记录"; exit 0; }
+
+tmp=$(mktemp)
+while IFS= read -r line; do
+  curl -sf -m 15 -X POST "$NOTE_ENDPOINT/api/capture" \
+    -H "Content-Type: application/json" -H "X-Auth-Token: $NOTE_TOKEN" \
+    -d "$line" >/dev/null || printf '%s\n' "$line" >> "$tmp"
+done < "$f"
+mv "$tmp" "$f"
+echo "剩余失败：$(wc -l < "$f" | tr -d ' ') 条"
