@@ -19,6 +19,8 @@ driftnote/
 │   ├── notion.js          # Notion API 封装
 │   ├── time.js            # 时区工具
 │   └── capture-page.js    # 书签脚本的中转页面
+├── scripts/
+│   └── setup-notion.mjs   # 检查 / 创建 Notion 数据库
 └── clients/
     ├── note / note-retry  # 终端命令
     ├── bookmarklet.js     # 浏览器书签脚本
@@ -43,9 +45,42 @@ driftnote/
 1. 打开 https://www.notion.so/profile/integrations → 新建 Internal Integration
 2. 复制 token（`ntn_` 开头），之后作为 `NOTION_API_KEY`
 
-### 1.2 创建三个数据库
+### 1.2 把 Integration 连接到页面
 
-每个数据库都建成整页（Full page）数据库。**属性名必须和下表完全一致**（或者同步修改 `src/config.js`）。默认的标题列叫 `Name`，记得改名。
+Token 和 Connection 管的是两件事：
+- **Token**：证明请求来自这个 Integration，相当于工牌
+- **Connection**：允许这个 Integration 访问哪些页面，相当于门禁授权
+
+Notion 默认不给 Integration 任何页面的权限。只有 token、没有连接时，所有页面对它来说都"不存在"，API 会返回 404 `object_not_found`。就算 token 泄露，别人也只能访问你连接过的页面。
+
+连接方法（任选一种）：
+- **在页面里**：打开页面 → 右上角 `···` → **连接（Connections）** → 添加连接 → 搜索 Integration 名称 → 确认
+- **在 Integration 设置里**：https://www.notion.so/profile/integrations → 点进 Integration → **Access** 标签页 → 选择页面
+
+连接会被子页面继承，所以只需要连接这一个父页面，脚本在它下面建的三个数据库自动有权限。如果在页面里找不到这个 Integration，检查它和页面是不是在同一个工作区。
+
+### 1.3 用脚本创建三个数据库
+
+1. 在 Notion 里新建一个空页面（例如叫 `driftnote`），把 Integration 连接到这个页面（见下方说明）
+2. 复制 `.dev.vars.example` 为 `.dev.vars`，填上 `NOTION_API_KEY` 和 `NOTION_PARENT_PAGE`（页面右上角 `···` → 复制链接）
+3. 运行：
+
+   ```bash
+   npm install
+   npm run setup:notion
+   ```
+
+脚本会在这个页面下检查 Entries / Daily / Weekly 三个库：
+- 已存在的直接复用，缺少的属性自动补上，标题列名字不对会自动改名
+- 不存在的就新建，包括双向关联和「条数」统计
+- 属性名存在但类型不对（例如「状态」用了 Notion 的 Status 类型）时只报错提示，不会改动已有属性
+- 三个数据库 ID 写进 `.dev.vars`；加上 `-- --secrets` 参数会同时上传为 Cloudflare secret（见第 3 节）
+
+脚本可以重复运行。改了 `src/config.js` 里的属性名或标签清单后，再运行一次即可补上新属性。
+
+### 1.4 数据库结构（供参考，也可以手动创建）
+
+属性名必须和下表完全一致（或者同步修改 `src/config.js`）。
 
 **Entries**
 
@@ -81,13 +116,11 @@ driftnote/
 | `结束` | Date | |
 | `每日` | Relation → Daily | 开启「在 Daily 上显示」，名称填 `周回顾` |
 
-### 1.3 授权和 ID
+手动创建时：三个库都要连接 Integration；数据库 ID 是数据库链接 `notion.so/<工作区>/<32 位 ID>?v=...` 中 `?v=` 之前的部分，填进 `.dev.vars`。
 
-1. 三个数据库各自点右上角 `···` → 连接（Connections）→ 添加刚才的 Integration
-2. 数据库 ID：打开数据库页面，链接 `notion.so/<工作区>/<32 位 ID>?v=...` 中 `?v=` 之前的 32 位字符串
-3. 把三个 ID 填进 `wrangler.toml` 的 `[vars]`
+### 1.5 视图（可选，但推荐）
 
-### 1.4 视图（可选，但推荐）
+视图无法通过 API 创建，需要手动建。
 
 在 Entries 上建：今天（List，`时间` 是今天，按时间升序）、收件匣（`状态` = 未处理）、链接库（Gallery，`类型` = 链接）、技术笔记（`类型` = 技术）、按主题（Board，按 `Tags` 分组）。
 
@@ -96,7 +129,7 @@ driftnote/
 ## 2. Telegram
 
 1. 找 `@BotFather` 发 `/newbot`，拿到 Bot Token
-2. 找 `@userinfobot` 发任意消息，拿到你的 user ID，填进 `wrangler.toml` 的 `MY_TG_USER_ID`
+2. 找 `@userinfobot` 发任意消息，拿到你的 user ID，作为 `MY_TG_USER_ID`
 3. 先给 Bot 发一条 `/start`（否则 Bot 无法主动给你推送）
 
 ---
@@ -108,14 +141,21 @@ git clone https://github.com/kintong3000/driftnote.git && cd driftnote
 npm install
 npx wrangler login
 
-# 机密配置（逐个输入）
+# 先部署一次，Cloudflare 上才有这个 Worker，之后才能设置 secret
+npx wrangler deploy
+
+# 配置（逐个输入）
 npx wrangler secret put NOTION_API_KEY
 npx wrangler secret put AUTH_TOKEN          # 用 openssl rand -hex 24 生成
 npx wrangler secret put TG_BOT_TOKEN
 npx wrangler secret put TG_WEBHOOK_SECRET   # 用 openssl rand -hex 24 生成
+npx wrangler secret put MY_TG_USER_ID
 
-npx wrangler deploy
+# 三个数据库 ID：由脚本检查/创建后自动上传
+npm run setup:notion -- --secrets
 ```
+
+设置 secret 后 Worker 会自动使用新配置，不需要重新部署。
 
 部署成功后会显示 Worker 地址，例如 `https://driftnote.<你的子域>.workers.dev`。
 
