@@ -5,9 +5,11 @@ export async function chatJSON(env, system, user) {
     const out = await env.AI.run(env.LLM_MODEL, {
       messages: [
         { role: "system", content: system },
-        // Qwen3 默认会先输出思考过程，/no_think 关闭它
-        { role: "user", content: `${user}\n\n/no_think` },
+        { role: "user", content: user },
       ],
+      // 模型默认开启思考（最高档），整理和摘要用不上，关掉省时间和额度
+      chat_template_kwargs: { enable_thinking: false },
+      response_format: { type: "json_object" },
       max_tokens: 4096,
       temperature: 0.3,
     });
