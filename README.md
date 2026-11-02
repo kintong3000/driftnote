@@ -13,7 +13,7 @@ driftnote/
 │   ├── prompts.js         # 日总结 / 周回顾的 prompt
 │   ├── capture.js         # 统一捕获：类型前缀、粗分类型、去重、写入 Entries
 │   ├── telegram.js        # Telegram 消息解析、语音转录、回复
-│   ├── reader.js          # 用 Jina Reader 抓取链接的标题和正文
+│   ├── reader.js          # 用 Firecrawl 抓取链接的标题和正文
 │   ├── daily.js           # 日任务
 │   ├── weekly.js          # 周任务
 │   ├── llm.js             # Workers AI 封装
@@ -171,7 +171,7 @@ npx wrangler secret put AUTH_TOKEN          # 用 openssl rand -hex 24 生成
 npx wrangler secret put TG_BOT_TOKEN
 npx wrangler secret put TG_WEBHOOK_SECRET   # 用 openssl rand -hex 24 生成
 npx wrangler secret put MY_TG_USER_ID
-npx wrangler secret put JINA_API_KEY        # 可选，不设置也能抓取网页，只是频率限制更严
+npx wrangler secret put FIRECRAWL_API_KEY   # 在 firecrawl.dev 注册获取；不设置则不抓取网页、不生成摘要
 
 # 三个数据源 ID：由脚本检查/创建后自动上传
 npm run setup:notion -- --secrets
@@ -292,8 +292,8 @@ Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回�
 - **CPU 时间**：免费版每次调用 10ms CPU（等待网络不计时）。如果日志里出现 `exceeded CPU` 错误，可能是语音太长或一次处理的记录太多，可以调小 `config.js` 里的 `LIMITS`，或升级 Workers Paid（$5/月）。
 - **Workers AI 额度**：每天 10,000 Neurons，UTC 00:00 重置。用量在 Cloudflare 后台 → AI → Workers AI 查看。
 - **模型名**可能随 Cloudflare 更新而变化，部署前在后台的模型列表确认 `wrangler.toml` 里的 `LLM_MODEL` / `STT_MODEL` 仍可用。
-- **链接抓取和摘要**：记录带链接时（书签选「取消」除外），保存后在后台通过 [Jina Reader](https://jina.ai/reader) 抓取正文，追加到页面正文，并用 Workers AI 生成摘要写进「摘要」属性；只发了一个链接时，标题换成网页标题。书签选「确定」时直接用浏览器读到的正文，不经过 Jina。
-  - 链接会经过 Jina 的服务器。需要登录的网站（知乎问答、小红书等）抓不到，这时只保存链接。
+- **链接抓取和摘要**：记录带链接时（书签选「取消」除外），保存后在后台通过 [Firecrawl](https://firecrawl.dev) 抓取正文，追加到页面正文，并用 Workers AI 生成摘要写进「摘要」属性；只发了一个链接时，标题换成网页标题。书签选「确定」时直接用浏览器读到的正文，不经过 Firecrawl。
+  - 链接会经过 Firecrawl 的服务器，每次抓取消耗 Firecrawl 额度。需要登录的网站（知乎问答、小红书等）抓不到，这时只保存链接。
   - Telegram 会等处理完再回复，并附上摘要；其他入口立即返回，几秒后摘要才出现在 Notion 里，失败只记在 Worker 日志（`npx wrangler tail`）。
   - 旧数据库需要运行一次 `npm run setup:notion` 补上「摘要」属性。
 - **去重**依赖 Notion 查询，Notion 的索引有几秒延迟，极短时间内的重复请求仍可能写入两条。

@@ -14,7 +14,7 @@ export const webBlocks = (content, max) => [block.divider(), block.h2("网页正
  * @param {object} opts
  * @param {string} opts.url
  * @param {string} [opts.content]  书签带来的正文，已在创建记录时写进页面
- * @param {boolean} opts.fetchPage 是否用 Jina 抓取
+ * @param {boolean} opts.fetchPage 是否用 Firecrawl 抓取
  * @param {boolean} opts.retitle   标题只是链接时，换成网页标题
  * @returns {Promise<{fetched: boolean, summary: string, title: string}>}
  */
