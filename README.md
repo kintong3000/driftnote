@@ -10,9 +10,10 @@ driftnote/
 ├── src/
 │   ├── index.js           # 路由 + 定时任务分发
 │   ├── config.js          # ⭐ 类型、Tag 清单、Notion 属性名、各种上限
-│   ├── prompts.js         # 日总结 / 周回顾的 prompt
+│   ├── prompts.js         # 日总结 / 周回顾 / 网页摘要的 prompt
 │   ├── capture.js         # 统一捕获：类型前缀、粗分类型、去重、写入 Entries
 │   ├── telegram.js        # Telegram 消息解析、语音转录、回复
+│   ├── enrich.js          # 带链接的记录：抓取正文、生成摘要、写回 Notion
 │   ├── reader.js          # 用 Firecrawl 抓取链接的标题和正文
 │   ├── daily.js           # 日任务
 │   ├── weekly.js          # 周任务
@@ -36,6 +37,20 @@ driftnote/
 | `POST /api/run` | 手动触发定时任务：`{"job": "daily" \| "weekly", "today": "YYYY-MM-DD"}`，`today` 可省略 |
 | `GET /capture` | 书签脚本的中转页面 |
 | `POST /webhook/telegram` | Telegram webhook |
+
+`/api/capture` 的请求体（JSON）：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `text` | `text` 和 `url` 至少一个 | 内容；以 `#类型` 开头可以指定类型 |
+| `url` | | 链接，不传则取内容里的第一个链接 |
+| `title` | | 标题，不传则取内容第一行 |
+| `source` | | 来源，默认 `api` |
+| `type` | | 类型，必须在 `config.js` 的 `TYPES` 里，否则忽略 |
+| `id` | | 外部 ID，相同 ID 不会重复写入 |
+| `time` | | 记录时间（ISO 格式），默认当前时间 |
+| `content` | | 网页正文（书签用），带了就不再抓取 |
+| `fetch` | | 传 `false` 时不抓取链接 |
 
 ---
 
@@ -62,7 +77,7 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 
 ### 1.3 用脚本创建三个数据库
 
-1. 在 Notion 里新建一个空页面（例如叫 `driftnote`），把 Integration 连接到这个页面（见下方说明）
+1. 在 Notion 里新建一个空页面（例如叫 `driftnote`），把 Integration 连接到这个页面（见 1.2）
 2. 复制 `.dev.vars.example` 为 `.dev.vars`，填上 `NOTION_API_KEY` 和 `NOTION_PARENT_PAGE`（页面右上角 `···` → 复制链接）
 3. 运行：
 
@@ -96,7 +111,7 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 | `类型` | Select | 选项会自动创建 |
 | `URL` | URL | |
 | `内容` | Text | |
-| `摘要` | Text | 带链接的记录由 AI 生成的网页摘要 |
+| `摘要` | Text | 带链接的记录由 AI 生成的网页摘要；日任务、周任务优先读它，没有再读 `内容` |
 | `Tags` | Multi-select | 选项会自动创建 |
 | `状态` | **Select** | 不要用 Notion 的 Status 类型，API 格式不一样 |
 | `AI已处理` | Checkbox | |
@@ -149,9 +164,12 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 
 ## 2. Telegram
 
-1. 找 `@BotFather` 发 `/newbot`，拿到 Bot Token
-2. 找 `@userinfobot` 发任意消息，拿到你的 user ID，作为 `MY_TG_USER_ID`
+1. 找 `@BotFather` 发 `/newbot`，拿到 Bot Token。完整格式是 `数字ID:字符串`（例如 `7123456789:AAH...`），冒号前后都要
+2. 找 `@userinfobot` 发任意消息，拿到你的 user ID（纯数字），作为 `MY_TG_USER_ID`
 3. 先给 Bot 发一条 `/start`（否则 Bot 无法主动给你推送）
+4. 可选：给 `@BotFather` 发 `/setjoingroups` → 选这个 Bot → `Disable`，禁止它被拉进群
+
+代码只处理 `MY_TG_USER_ID` 发来的消息，别人发给 Bot 的消息会被忽略，不保存也不回复。
 
 ---
 
@@ -190,6 +208,11 @@ curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
   -d 'allowed_updates=["message"]'
 ```
 
+- `url` 必须带 `https://`，`secret_token` 必须和 `TG_WEBHOOK_SECRET` 完全一致
+- 返回 `{"ok":false,"error_code":404}` 说明 Bot Token 不完整或写错了
+
+检查 webhook 状态：`curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/getWebhookInfo"`。`last_error_message` 出现 `401` 说明两边的 secret 不一致。
+
 查看实时日志：`npm run tail`
 
 ---
@@ -215,7 +238,9 @@ export PATH="$HOME/.local/bin:$PATH"
 [ -s ~/.note_failed.jsonl ] && echo "⚠️ 有 $(wc -l < ~/.note_failed.jsonl | tr -d ' ') 条 note 发送失败，运行 note-retry 重发"
 ```
 
-用法：`note "想法"`、`cmd | note`、`note -t 技术 "内容"`。依赖 `jq`（macOS 自带）。
+用法：`note "想法"`、`cmd | note`、`note -t 技术 "内容"`、`note -t 技术 < 笔记.md`。依赖 `jq`（macOS 自带）。
+
+多行内容会原样保存，但 Markdown 不会渲染成 Notion 的标题、列表等格式；第一行会作为标题。
 
 ### 4.2 浏览器
 
@@ -281,7 +306,7 @@ curl -s -X POST $EP/api/run -H "X-Auth-Token: $TK" -d '{"job":"daily","today":"2
 curl -s -X POST $EP/api/run -H "X-Auth-Token: $TK" -d '{"job":"weekly","today":"2026-11-02"}'
 ```
 
-Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回复；发贴纸应该回复「暂不支持」。
+Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回复；发贴纸应该回复「暂不支持」。发一个文章链接，回复里应该带摘要，标题换成文章标题；抓取失败时回复「网页抓取失败」，原因见 `npm run tail` 里的 `readPage` 日志。
 
 ---
 
@@ -292,8 +317,11 @@ Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回�
 - **CPU 时间**：免费版每次调用 10ms CPU（等待网络不计时）。如果日志里出现 `exceeded CPU` 错误，可能是语音太长或一次处理的记录太多，可以调小 `config.js` 里的 `LIMITS`，或升级 Workers Paid（$5/月）。
 - **Workers AI 额度**：每天 10,000 Neurons，UTC 00:00 重置。用量在 Cloudflare 后台 → AI → Workers AI 查看。
 - **模型名**可能随 Cloudflare 更新而变化，部署前在后台的模型列表确认 `wrangler.toml` 里的 `LLM_MODEL` / `STT_MODEL` 仍可用。
-- **链接抓取和摘要**：记录带链接时（书签选「取消」除外），保存后在后台通过 [Firecrawl](https://firecrawl.dev) 抓取正文，追加到页面正文，并用 Workers AI 生成摘要写进「摘要」属性；只发了一个链接时，标题换成网页标题。书签选「确定」时直接用浏览器读到的正文，不经过 Firecrawl。
-  - 链接会经过 Firecrawl 的服务器，每次抓取消耗 Firecrawl 额度。需要登录的网站（知乎问答、小红书等）抓不到，这时只保存链接。
+- **链接抓取和摘要**：链接是记录的主体时（去掉链接后剩下不到 80 字，和自动判断「链接」类型的规则相同；书签选「取消」除外），保存后在后台通过 [Firecrawl](https://firecrawl.dev) 抓取正文，追加到页面正文，并用 Workers AI 生成摘要写进「摘要」属性；只发了一个链接时，标题换成网页标题。书签选「确定」时直接用浏览器读到的正文，不经过 Firecrawl。
+  - 只抓第一个链接。长笔记里顺带提到的链接不抓，否则夜间 AI 读到的会是网页摘要而不是笔记本身。
+  - 抓取前会去掉追踪参数（X 的 `s`、`t`，`utm_*` 等），URL 属性仍保存原始链接。
+  - 链接会经过 Firecrawl 的服务器，每次抓取消耗 Firecrawl 额度。需要登录的网站（知乎问答、小红书等）抓不到，这时只保存链接；这类内容在电脑上用书签保存更可靠。
+  - 后台处理总共约 30 秒（Cloudflare `waitUntil` 的限制），抓取超时设为 20 秒，见 `LIMITS.readerTimeoutMs`。
   - Telegram 会等处理完再回复，并附上摘要；其他入口立即返回，几秒后摘要才出现在 Notion 里，失败只记在 Worker 日志（`npx wrangler tail`）。
   - 旧数据库需要运行一次 `npm run setup:notion` 补上「摘要」属性。
 - **去重**依赖 Notion 查询，Notion 的索引有几秒延迟，极短时间内的重复请求仍可能写入两条。
