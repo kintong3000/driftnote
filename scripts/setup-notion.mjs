@@ -37,6 +37,7 @@ const DATABASES = [
       [ENTRY.type]: { select: options(TYPES) },
       [ENTRY.url]: { url: {} },
       [ENTRY.content]: { rich_text: {} },
+      [ENTRY.summary]: { rich_text: {} },
       [ENTRY.tags]: { multi_select: options(TAGS) },
       [ENTRY.status]: { select: options(Object.values(STATUS)) },
       [ENTRY.aiDone]: { checkbox: {} },

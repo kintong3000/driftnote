@@ -1,6 +1,7 @@
 // 统一捕获：所有入口（API、Telegram）最终都调用 capture()
 
-import { ENTRY, STATUS, TYPES } from "./config.js";
+import { ENTRY, LIMITS, STATUS, TYPES } from "./config.js";
+import { enrich, webBlocks } from "./enrich.js";
 import { notion, query, P, read, truncate, paragraphs } from "./notion.js";
 import { localDateTime } from "./time.js";
 
@@ -22,6 +23,9 @@ const URL_RE = /https?:\/\/[^\s<>"'，。）】]+/;
  * @param {string} [input.type]  强制指定类型
  * @param {string} [input.id]    外部 ID，用于去重
  * @param {string} [input.time]  记录时间（ISO），默认当前
+ * @param {string} [input.content] 网页正文（书签带来），写进页面正文并生成摘要，不进「内容」属性
+ * @param {boolean} [input.fetch] 传 false 时不抓取链接
+ * @returns 其中 enriched 是后台补充网页内容的 Promise，没有链接时为 null
  */
 export async function capture(env, input) {
   let text = String(input.text ?? "").trim();
@@ -50,6 +54,8 @@ export async function capture(env, input) {
     }
   }
 
+  const content = truncate(String(input.content ?? "").trim(), LIMITS.pageContentChars);
+
   const properties = {
     [ENTRY.title]: P.title(title),
     [ENTRY.time]: P.date(input.time || localDateTime()),
@@ -62,19 +68,34 @@ export async function capture(env, input) {
   if (url) properties[ENTRY.url] = P.url(url);
   if (externalId) properties[ENTRY.externalId] = P.text(externalId);
 
+  // 单次请求最多 100 个 block、500KB，网页正文按字数截断，并给批注留 10 段
+  const children = paragraphs(text).slice(0, content ? 10 : 100);
+  if (content) children.push(...webBlocks(content, 100 - children.length));
+
   const page = await notion(env, "/pages", "POST", {
     parent: { type: "data_source_id", data_source_id: env.NOTION_ENTRIES_DS },
     properties,
-    children: paragraphs(text),
+    children,
   });
-  return { page, type, title, duplicate: false };
+
+  // 有链接时在后台抓取网页、生成摘要；调用方负责等待（Telegram）或交给 ctx.waitUntil（API）
+  // 长笔记里顺带提到的链接不抓，否则夜间 AI 读到的是网页摘要而不是笔记本身
+  const fetchPage = linkIsMain(text, url) && !content && input.fetch !== false;
+  const retitle = !input.title && !text.replace(url, "").trim();
+  const enriched = content || fetchPage ? enrich(env, page.id, { url, content, fetchPage, retitle }) : null;
+  return { page, type, title, duplicate: false, enriched };
 }
 
 // 粗分类型，夜间 AI 会再修正
 function guessType(text, url, source) {
   if (source.endsWith("voice")) return "语音";
-  if (url && text.replace(url, "").trim().length < 80) return "链接";
+  if (linkIsMain(text, url)) return "链接";
   return "想法";
+}
+
+// 链接是记录的主体：去掉链接后只剩不到 80 字（批注、标题之类）
+function linkIsMain(text, url) {
+  return Boolean(url) && text.replace(url, "").trim().length < 80;
 }
 
 async function findByExternalId(env, externalId) {

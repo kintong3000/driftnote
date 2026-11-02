@@ -120,7 +120,8 @@ const entryDate = (p) => localDate(new Date(read.date(p, ENTRY.time)));
 function entryLine(p, withContent) {
   const tags = read.multi(p, ENTRY.tags).map((t) => `#${t}`).join(" ");
   let line = `${entryDate(p)} [${read.select(p, ENTRY.type)}] ${read.title(p, ENTRY.title)} ${tags}`.trim();
-  if (withContent) line += `：${read.text(p, ENTRY.content).slice(0, 100)}`;
+  // 有网页摘要时用摘要，没有再用「内容」
+  if (withContent) line += `：${(read.text(p, ENTRY.summary) || read.text(p, ENTRY.content)).slice(0, 100)}`;
   return line;
 }
 

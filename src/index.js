@@ -43,6 +43,7 @@ export default {
 
         const body = await readJSON(request);
         const r = await capture(env, { ...body, source: body.source || "api" });
+        if (r.enriched) ctx.waitUntil(r.enriched.catch((err) => console.error("enrich", err)));
         return json({ status: "success", duplicate: r.duplicate, type: r.type, title: r.title, url: r.page.url });
       }
 

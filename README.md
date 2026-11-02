@@ -13,6 +13,7 @@ driftnote/
 │   ├── prompts.js         # 日总结 / 周回顾的 prompt
 │   ├── capture.js         # 统一捕获：类型前缀、粗分类型、去重、写入 Entries
 │   ├── telegram.js        # Telegram 消息解析、语音转录、回复
+│   ├── reader.js          # 用 Jina Reader 抓取链接的标题和正文
 │   ├── daily.js           # 日任务
 │   ├── weekly.js          # 周任务
 │   ├── llm.js             # Workers AI 封装
@@ -95,6 +96,7 @@ Notion 默认不给 Integration 任何页面的权限。只有 token、没有连
 | `类型` | Select | 选项会自动创建 |
 | `URL` | URL | |
 | `内容` | Text | |
+| `摘要` | Text | 带链接的记录由 AI 生成的网页摘要 |
 | `Tags` | Multi-select | 选项会自动创建 |
 | `状态` | **Select** | 不要用 Notion 的 Status 类型，API 格式不一样 |
 | `AI已处理` | Checkbox | |
@@ -169,6 +171,7 @@ npx wrangler secret put AUTH_TOKEN          # 用 openssl rand -hex 24 生成
 npx wrangler secret put TG_BOT_TOKEN
 npx wrangler secret put TG_WEBHOOK_SECRET   # 用 openssl rand -hex 24 生成
 npx wrangler secret put MY_TG_USER_ID
+npx wrangler secret put JINA_API_KEY        # 可选，不设置也能抓取网页，只是频率限制更严
 
 # 三个数据源 ID：由脚本检查/创建后自动上传
 npm run setup:notion -- --secrets
@@ -217,6 +220,12 @@ export PATH="$HOME/.local/bin:$PATH"
 ### 4.2 浏览器
 
 打开 `clients/bookmarklet.js`，替换 `EP` 和 `TK`，然后把从 `javascript:` 开始的整段代码粘贴到新书签的「网址」栏。
+
+用法：选中文字（可选）→ 点书签 → 输入批注 → 选择是否同时保存网页正文：
+- **确定**：在浏览器里直接读取页面正文（优先取 `<article>` / `<main>` 区域），写进 Notion 页面正文，并生成 AI 摘要。需要登录才能看的页面也能存下来。
+- **取消**：只保存批注、选中的文字、标题和链接，不抓取、不生成摘要。
+
+修改 `bookmarklet.js` 后需要重新粘贴到书签里才会生效。
 
 ### 4.3 Claude Code
 
@@ -283,4 +292,8 @@ Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回�
 - **CPU 时间**：免费版每次调用 10ms CPU（等待网络不计时）。如果日志里出现 `exceeded CPU` 错误，可能是语音太长或一次处理的记录太多，可以调小 `config.js` 里的 `LIMITS`，或升级 Workers Paid（$5/月）。
 - **Workers AI 额度**：每天 10,000 Neurons，UTC 00:00 重置。用量在 Cloudflare 后台 → AI → Workers AI 查看。
 - **模型名**可能随 Cloudflare 更新而变化，部署前在后台的模型列表确认 `wrangler.toml` 里的 `LLM_MODEL` / `STT_MODEL` 仍可用。
+- **链接抓取和摘要**：记录带链接时（书签选「取消」除外），保存后在后台通过 [Jina Reader](https://jina.ai/reader) 抓取正文，追加到页面正文，并用 Workers AI 生成摘要写进「摘要」属性；只发了一个链接时，标题换成网页标题。书签选「确定」时直接用浏览器读到的正文，不经过 Jina。
+  - 链接会经过 Jina 的服务器。需要登录的网站（知乎问答、小红书等）抓不到，这时只保存链接。
+  - Telegram 会等处理完再回复，并附上摘要；其他入口立即返回，几秒后摘要才出现在 Notion 里，失败只记在 Worker 日志（`npx wrangler tail`）。
+  - 旧数据库需要运行一次 `npm run setup:notion` 补上「摘要」属性。
 - **去重**依赖 Notion 查询，Notion 的索引有几秒延迟，极短时间内的重复请求仍可能写入两条。

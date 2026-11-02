@@ -7,6 +7,7 @@ import { localDateTime } from "./time.js";
 
 const HELP = `直接发消息即可记录：文字、语音、转发的消息都可以。
 以 #待办 #技术 #想法 #AI对话 等开头可以指定类型。
+消息里有链接时会抓取网页正文并生成摘要（需要登录的网站抓不到，只保存链接）。
 图片和文件目前只记录说明文字，不保存文件本身。`;
 
 export async function tg(env, method, body) {
@@ -48,7 +49,19 @@ export async function handleTelegram(env, update) {
       id: `tg:${update.update_id}`,
       time: localDateTime(new Date(msg.date * 1000)),
     });
-    await reply(`${r.duplicate ? "✓ 已存在" : "✓"} ${r.type} · ${truncate(r.title, 50)}`);
+    // 已经在 waitUntil 里了，直接等网页处理完，把结果一起回复
+    const e = r.enriched && (await r.enriched.catch((err) => (console.error("enrich", err), null)));
+    const title = truncate(e?.title || r.title, 50);
+    const status = !r.enriched
+      ? ""
+      : !e
+        ? " · 网页处理出错"
+        : e.summary
+          ? `\n\n${e.summary}`
+          : e.fetched
+            ? " · 已抓取网页，摘要失败"
+            : " · 网页抓取失败";
+    await reply(`${r.duplicate ? "✓ 已存在" : "✓"} ${r.type} · ${title}${status}`);
   } catch (err) {
     console.error(err);
     await reply(`❌ 保存失败：${err.message}\n请稍后重发。`).catch(() => {});
@@ -77,7 +90,8 @@ async function toCaptureInput(env, msg) {
   // 来源放在末尾，以免挡住开头的 #类型 前缀
   const origin = forwardOrigin(msg);
   if (origin) text += `\n\n转发自：${origin}`;
-  return { text, url, type };
+  // 只抓取消息里的链接，不抓「转发自」里的 t.me 链接
+  return { text, url, type, fetch: Boolean(url) };
 }
 
 function firstUrl(text = "", entities = []) {

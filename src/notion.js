@@ -79,6 +79,7 @@ export const read = {
 export const block = {
   h2: (s) => ({ type: "heading_2", heading_2: { rich_text: richText(s) } }),
   para: (s) => ({ type: "paragraph", paragraph: { rich_text: richText(s) } }),
+  divider: () => ({ type: "divider", divider: {} }),
   bullet: (rich) => ({
     type: "bulleted_list_item",
     bulleted_list_item: { rich_text: typeof rich === "string" ? richText(rich) : rich },
@@ -87,3 +88,18 @@ export const block = {
 
 // 长文本转成多个段落（单次请求最多 100 个 block）
 export const paragraphs = (text) => chunkText(text).slice(0, 100).map(block.para);
+
+// 网页正文转成段落：按行合并，每段不超过 2000 字，最多 max 段
+export function lineBlocks(text, max = 100) {
+  const out = [];
+  let cur = "";
+  for (const line of text.split("\n")) {
+    if (cur && cur.length + line.length + 1 > 2000) {
+      out.push(cur);
+      cur = "";
+    }
+    cur = cur ? `${cur}\n${line}` : line;
+  }
+  if (cur) out.push(cur);
+  return out.flatMap((s) => chunkText(s)).slice(0, max).map(block.para);
+}

@@ -30,6 +30,7 @@ export const ENTRY = {
   type: "类型",
   url: "URL",
   content: "内容",
+  summary: "摘要",
   tags: "Tags",
   status: "状态",
   aiDone: "AI已处理",
@@ -55,5 +56,8 @@ export const LIMITS = {
   daysPerRun: 3, // 日任务一次最多处理几天的积压
   entriesPerDay: 100, // Notion 单次写入关联的上限
   charsPerEntryForAI: 500, // 每条记录给 AI 看的字数，避免超出上下文
+  pageContentChars: 100000, // 书签保存的网页正文上限，中文约 300KB，低于 Notion 单次请求 500KB 的限制
+  readerTimeoutMs: 12000, // Jina Reader 抓取网页的超时，超时就只存链接；后台处理总共只有约 30 秒，还要留给摘要
+  summaryInputChars: 6000, // 生成网页摘要时给 AI 看的正文字数
   weeklyLines: 300, // 周回顾最多给 AI 看多少条记录标题
 };

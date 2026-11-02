@@ -113,7 +113,9 @@ function formatEntries(pages) {
       const url = read.url(p, ENTRY.url);
       if (url) meta.push(`链接:${url}`);
       const lines = [`[${i + 1}] ${meta.join(" ")}`, `标题:${read.title(p, ENTRY.title)}`];
-      lines.push(read.text(p, ENTRY.content).slice(0, LIMITS.charsPerEntryForAI));
+      // 有网页摘要时用摘要，没有再用「内容」
+      const text = read.text(p, ENTRY.summary) || read.text(p, ENTRY.content);
+      lines.push(text.slice(0, LIMITS.charsPerEntryForAI));
       return lines.join("\n");
     })
     .join("\n\n");
