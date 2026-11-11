@@ -1,6 +1,7 @@
 // Telegram：解析消息 → capture()，并回复保存结果
 
 import { capture } from "./capture.js";
+import { LIMITS } from "./config.js";
 import { transcribe } from "./llm.js";
 import { truncate } from "./notion.js";
 import { localDateTime } from "./time.js";
@@ -8,7 +9,7 @@ import { localDateTime } from "./time.js";
 const HELP = `直接发消息即可记录：文字、语音、转发的消息都可以。
 以 #待办 #技术 #想法 #AI对话 等开头可以指定类型。
 消息里有链接时会抓取网页正文并生成摘要（需要登录的网站抓不到，只保存链接）。
-图片和文件目前只记录说明文字，不保存文件本身。`;
+发 .md / .txt 等文本文件会读取文件内容存进笔记并生成摘要；图片和其他文件只记录说明文字，不保存文件本身。`;
 
 export async function tg(env, method, body) {
   const res = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/${method}`, {
@@ -58,8 +59,8 @@ export async function handleTelegram(env, update) {
         ? " · 网页处理出错"
         : e.summary
           ? `\n\n${e.summary}`
-          : e.fetched
-            ? " · 已抓取网页，摘要失败"
+          : input.content || e.fetched
+            ? ` · 已保存${input.content ? "文件内容" : "网页"}，摘要失败`
             : " · 网页抓取失败";
     await reply(`${r.duplicate ? "✓ 已存在" : "✓"} ${r.type} · ${title}${status}`);
   } catch (err) {
@@ -69,7 +70,7 @@ export async function handleTelegram(env, update) {
 }
 
 async function toCaptureInput(env, msg) {
-  let text, url, type;
+  let text, url, type, title, content;
 
   if (msg.text) {
     text = msg.text;
@@ -79,6 +80,15 @@ async function toCaptureInput(env, msg) {
     if (!transcript) throw new Error("语音没有识别出内容");
     text = `[语音] ${transcript}`;
     type = "语音";
+  } else if (isTextFile(msg.document)) {
+    const name = msg.document.file_name || "未命名文件";
+    const buf = await fetchFile(env, msg.document.file_id, "文件");
+    content = new TextDecoder("utf-8").decode(buf).replace(/^\uFEFF/, "").trim();
+    if (!content) throw new Error("文件是空的");
+    text = msg.caption ? `${msg.caption}\n[文件] ${name}` : `[文件] ${name}`;
+    url = firstUrl(msg.caption, msg.caption_entities);
+    // 没有说明文字时，标题用 Markdown 的第一个一级标题，没有就用文件名
+    if (!msg.caption) title = content.match(/^#\s+(.+)$/m)?.[1].trim() || name.replace(/\.[^.]+$/, "");
   } else if (msg.photo || msg.document || msg.video) {
     const label = msg.photo ? "[图片]" : msg.document ? `[文件] ${msg.document.file_name || ""}` : "[视频]";
     text = msg.caption ? `${msg.caption}\n${label}` : label;
@@ -90,8 +100,18 @@ async function toCaptureInput(env, msg) {
   // 来源放在末尾，以免挡住开头的 #类型 前缀
   const origin = forwardOrigin(msg);
   if (origin) text += `\n\n转发自：${origin}`;
+  // 文件内容已经带上了，不再抓取链接
+  if (content) return { text, url, type, title, content, contentHeading: "文件内容" };
   // 只抓取消息里的链接，不抓「转发自」里的 t.me 链接
   return { text, url, type, fetch: Boolean(url) };
+}
+
+const TEXT_EXT = /\.(md|markdown|txt|text|org|rst|csv|tsv|json|ya?ml|toml|xml|html?|log)$/i;
+
+// 只读小的文本文件（Telegram Bot 最多能下载 20MB）
+function isTextFile(doc) {
+  if (!doc || doc.file_size > LIMITS.tgTextFileBytes) return false;
+  return TEXT_EXT.test(doc.file_name || "") || String(doc.mime_type || "").startsWith("text/");
 }
 
 function firstUrl(text = "", entities = []) {
@@ -114,9 +134,13 @@ function forwardOrigin(msg) {
   return "";
 }
 
-async function transcribeFile(env, fileId) {
+async function fetchFile(env, fileId, label) {
   const file = await tg(env, "getFile", { file_id: fileId });
   const res = await fetch(`https://api.telegram.org/file/bot${env.TG_BOT_TOKEN}/${file.file_path}`);
-  if (!res.ok) throw new Error(`下载语音失败：${res.status}`);
-  return transcribe(env, await res.arrayBuffer());
+  if (!res.ok) throw new Error(`下载${label}失败：${res.status}`);
+  return res.arrayBuffer();
+}
+
+async function transcribeFile(env, fileId) {
+  return transcribe(env, await fetchFile(env, fileId, "语音"));
 }

@@ -7,8 +7,12 @@ import { notion, P, block, lineBlocks, truncate } from "./notion.js";
 import { SUMMARY_PROMPT } from "./prompts.js";
 import { readPage } from "./reader.js";
 
-// 页面正文里「网页正文」这一节
-export const webBlocks = (content, max) => [block.divider(), block.h2("网页正文"), ...lineBlocks(content, max - 2)];
+// 页面正文里「网页正文」这一节（Telegram 发来的文本文件用「文件内容」）
+export const webBlocks = (content, max, heading = "网页正文") => [
+  block.divider(),
+  block.h2(heading),
+  ...lineBlocks(content, max - 2),
+];
 
 /**
  * @param {object} opts

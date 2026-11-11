@@ -58,6 +58,7 @@ export const LIMITS = {
   charsPerEntryForAI: 500, // 每条记录给 AI 看的字数，避免超出上下文
   pageContentChars: 100000, // 书签保存的网页正文上限，中文约 300KB，低于 Notion 单次请求 500KB 的限制
   readerTimeoutMs: 20000, // Firecrawl 抓取网页的超时，超时就只存链接；后台处理总共约 30 秒，剩下的留给摘要
+  tgTextFileBytes: 1024 * 1024, // Telegram 发来的文本文件（.md/.txt 等）超过这个大小只记文件名，不读内容
   summaryInputChars: 6000, // 生成网页摘要时给 AI 看的正文字数
   weeklyLines: 300, // 周回顾最多给 AI 看多少条记录标题
 };

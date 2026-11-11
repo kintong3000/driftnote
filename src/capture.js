@@ -24,6 +24,7 @@ const URL_RE = /https?:\/\/[^\s<>"'，。）】]+/;
  * @param {string} [input.id]    外部 ID，用于去重
  * @param {string} [input.time]  记录时间（ISO），默认当前
  * @param {string} [input.content] 网页正文（书签带来），写进页面正文并生成摘要，不进「内容」属性
+ * @param {string} [input.contentHeading] 正文那一节的标题，默认「网页正文」
  * @param {boolean} [input.fetch] 传 false 时不抓取链接
  * @returns 其中 enriched 是后台补充网页内容的 Promise，没有链接时为 null
  */
@@ -70,7 +71,7 @@ export async function capture(env, input) {
 
   // 单次请求最多 100 个 block、500KB，网页正文按字数截断，并给批注留 10 段
   const children = paragraphs(text).slice(0, content ? 10 : 100);
-  if (content) children.push(...webBlocks(content, 100 - children.length));
+  if (content) children.push(...webBlocks(content, 100 - children.length, input.contentHeading));
 
   const page = await notion(env, "/pages", "POST", {
     parent: { type: "data_source_id", data_source_id: env.NOTION_ENTRIES_DS },
