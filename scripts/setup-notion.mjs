@@ -58,6 +58,13 @@ const DATABASES = [
         sorts: byTime("ascending"),
       },
       { name: "收件匣", type: "table", filter: is(ENTRY.status, "select", STATUS.inbox), sorts: byTime("descending") },
+      // 做完改成「已归档」、不做了改成「丢弃」，就会从这个视图消失
+      {
+        name: "待办",
+        type: "table",
+        filter: { and: [is(ENTRY.type, "select", "待办"), is(ENTRY.status, "select", STATUS.inbox)] },
+        sorts: byTime("ascending"),
+      },
       { name: "链接库", type: "gallery", filter: is(ENTRY.type, "select", "链接"), sorts: byTime("descending") },
       { name: "技术笔记", type: "list", filter: is(ENTRY.type, "select", "技术"), sorts: byTime("descending") },
       {
