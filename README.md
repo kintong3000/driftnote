@@ -331,5 +331,5 @@ Telegram：发文字、语音、转发一条消息，都应该收到 `✓` 回�
   - 后台处理总共约 30 秒（Cloudflare `waitUntil` 的限制），抓取超时设为 20 秒，见 `LIMITS.readerTimeoutMs`。
   - Telegram 会等处理完再回复，并附上摘要；其他入口立即返回，几秒后摘要才出现在 Notion 里，失败只记在 Worker 日志（`npx wrangler tail`）。
   - 旧数据库需要运行一次 `npm run setup:notion` 补上「摘要」属性。
-- **Telegram 文本文件**：`.md`、`.txt`、`.csv`、`.json` 等文本文件（或 MIME 为 `text/*`）不超过 1MB 时（`LIMITS.tgTextFileBytes`），会读取内容写进页面正文的「文件内容」一节，并像网页一样生成摘要；标题取说明文字，没有说明文字时取 Markdown 第一个 `# 标题`，再没有就用文件名。文件按 UTF-8 解码。图片和其他文件仍只记录说明文字。
+- **Telegram 文本文件**：`.md`、`.txt`、`.csv`、`.json` 等文本文件（或 MIME 为 `text/*`）不超过 1MB 时（`LIMITS.tgTextFileBytes`），会读取内容写进页面正文的「文件内容」一节（`.md` 文件按 Markdown 渲染成 Notion 的标题、列表、代码块等，内容太长或格式太复杂被 Notion 拒绝时退回纯文本；其他文件按纯文本存），并像网页一样生成摘要；标题取说明文字，没有说明文字时取 Markdown 第一个 `# 标题`，再没有就用文件名。文件按 UTF-8 解码。图片和其他文件仍只记录说明文字。
 - **去重**依赖 Notion 查询，Notion 的索引有几秒延迟，极短时间内的重复请求仍可能写入两条。

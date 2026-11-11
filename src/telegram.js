@@ -101,7 +101,7 @@ async function toCaptureInput(env, msg) {
   const origin = forwardOrigin(msg);
   if (origin) text += `\n\n转发自：${origin}`;
   // 文件内容已经带上了，不再抓取链接
-  if (content) return { text, url, type, title, content, contentHeading: "文件内容" };
+  if (content) return { text, url, type, title, content, contentHeading: "文件内容", markdown: isMarkdown(msg.document) };
   // 只抓取消息里的链接，不抓「转发自」里的 t.me 链接
   return { text, url, type, fetch: Boolean(url) };
 }
@@ -113,6 +113,9 @@ function isTextFile(doc) {
   if (!doc || doc.file_size > LIMITS.tgTextFileBytes) return false;
   return TEXT_EXT.test(doc.file_name || "") || String(doc.mime_type || "").startsWith("text/");
 }
+
+// .txt 之类按纯文本存，避免里面的 * _ # 被当成格式
+const isMarkdown = (doc) => /\.(md|markdown)$/i.test(doc.file_name || "") || doc.mime_type === "text/markdown";
 
 function firstUrl(text = "", entities = []) {
   for (const e of entities) {

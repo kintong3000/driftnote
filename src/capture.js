@@ -25,6 +25,7 @@ const URL_RE = /https?:\/\/[^\s<>"'，。）】]+/;
  * @param {string} [input.time]  记录时间（ISO），默认当前
  * @param {string} [input.content] 网页正文（书签带来），写进页面正文并生成摘要，不进「内容」属性
  * @param {string} [input.contentHeading] 正文那一节的标题，默认「网页正文」
+ * @param {boolean} [input.markdown] content 是 Markdown，按 Markdown 渲染
  * @param {boolean} [input.fetch] 传 false 时不抓取链接
  * @returns 其中 enriched 是后台补充网页内容的 Promise，没有链接时为 null
  */
@@ -69,15 +70,22 @@ export async function capture(env, input) {
   if (url) properties[ENTRY.url] = P.url(url);
   if (externalId) properties[ENTRY.externalId] = P.text(externalId);
 
-  // 单次请求最多 100 个 block、500KB，网页正文按字数截断，并给批注留 10 段
-  const children = paragraphs(text).slice(0, content ? 10 : 100);
-  if (content) children.push(...webBlocks(content, 100 - children.length, input.contentHeading));
-
-  const page = await notion(env, "/pages", "POST", {
-    parent: { type: "data_source_id", data_source_id: env.NOTION_ENTRIES_DS },
-    properties,
-    children,
-  });
+  const parent = { type: "data_source_id", data_source_id: env.NOTION_ENTRIES_DS };
+  let page;
+  // Markdown 正文直接交给 Notion 渲染（标题、列表、代码块等）；太长或格式太复杂会被拒绝，退回按段落写纯文本
+  if (content && input.markdown) {
+    const heading = input.contentHeading || "网页正文";
+    const markdown = `${text}\n\n---\n\n## ${heading}\n\n${content}`;
+    page = await notion(env, "/pages", "POST", { parent, properties, markdown, markdown_version: "v2" }).catch(
+      (err) => console.error("markdown page", err.message),
+    );
+  }
+  if (!page) {
+    // 单次请求最多 100 个 block、500KB，网页正文按字数截断，并给批注留 10 段
+    const children = paragraphs(text).slice(0, content ? 10 : 100);
+    if (content) children.push(...webBlocks(content, 100 - children.length, input.contentHeading));
+    page = await notion(env, "/pages", "POST", { parent, properties, children });
+  }
 
   // 有链接时在后台抓取网页、生成摘要；调用方负责等待（Telegram）或交给 ctx.waitUntil（API）
   // 长笔记里顺带提到的链接不抓，否则夜间 AI 读到的是网页摘要而不是笔记本身
