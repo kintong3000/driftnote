@@ -26,7 +26,8 @@ driftnote/
 └── clients/
     ├── note / note-retry  # 终端命令
     ├── bookmarklet.js     # 浏览器书签脚本
-    └── claude-code-note.md  # Claude Code 的 /note 命令
+    ├── claude-code-note.md  # Claude Code 的 /note 命令
+    └── knowledge-to-notion/ # Claude Code skill：对话提炼成知识总结后保存
 ```
 
 接口：
@@ -50,6 +51,8 @@ driftnote/
 | `id` | | 外部 ID，相同 ID 不会重复写入 |
 | `time` | | 记录时间（ISO 格式），默认当前时间 |
 | `content` | | 网页正文（书签用），带了就不再抓取 |
+| `contentHeading` | | 正文那一节的标题，默认「网页正文」 |
+| `markdown` | | 传 `true` 时 `content` 按 Markdown 渲染（标题、列表、代码块等） |
 | `fetch` | | 传 `false` 时不抓取链接 |
 
 ---
@@ -265,6 +268,16 @@ cp clients/claude-code-note.md ~/.claude/commands/note.md
 ```
 
 在 Claude Code 里输入 `/note` 或 `/note 重点记一下 xxx`。
+
+需要更完整的知识沉淀时，安装 `knowledge-to-notion` skill：按固定模板把对话提炼成一篇知识总结（背景、核心知识、决策与取舍、踩坑等），Markdown 正文渲染进页面。环境变量和 `note` 共用（`NOTE_ENDPOINT`、`NOTE_TOKEN`、`NOTE_SOURCE`），发送失败同样写进 `~/.note_failed.jsonl`，用 `note-retry` 重发。
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r clients/knowledge-to-notion ~/.claude/skills/
+python3 ~/.claude/skills/knowledge-to-notion/scripts/save_to_notion.py --check
+```
+
+在 Claude Code 里输入 `/knowledge-to-notion`，或者直接说「沉淀一下」「存到 Notion」；可以带主题，例如 `/knowledge-to-notion 只总结部署部分`。
 
 ### 4.4 iOS 快捷指令
 
